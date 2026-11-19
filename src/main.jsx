@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useState, useCallback, useRef } from 'preact/hooks';
 import './style.css';
-import { init, getSession, onAuthChange, sendMagicLink, demoLogin, demoUsers, signOut, rpc, DEMO } from './api.js';
+import { init, getSession, onAuthChange, sendMagicLink, verifyCode, demoLogin, demoUsers, signOut, rpc, DEMO } from './api.js';
 import { Ctx, Icon } from './ui.jsx';
 import { Avond } from './screens/Avond.jsx';
 import { Spellen } from './screens/Spellen.jsx';
@@ -35,11 +35,17 @@ function Login() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [code, setCode] = useState('');
   const [users, setUsers] = useState(null);
   useEffect(() => { if (DEMO) demoUsers().then(setUsers); }, []);
   async function submit(e) {
     e.preventDefault(); setErr(''); setBusy(true);
     try { await sendMagicLink(email.trim()); setSent(true); } catch (x) { setErr(x.message); }
+    setBusy(false);
+  }
+  async function submitCode(e) {
+    e.preventDefault(); setErr(''); setBusy(true);
+    try { await verifyCode(email.trim(), code.replace(/\s/g, '')); } catch (x) { setErr(x.message); }
     setBusy(false);
   }
   return (
@@ -57,13 +63,20 @@ function Login() {
             ))}
           </>
         ) : sent ? (
-          <div class="note n-green" role="status"><strong>Check je mail.</strong> We hebben een inloglink gestuurd naar {email}. Open die link op dit toestel. Geen mail gezien? Kijk ook even in je spam.</div>
+          <form onSubmit={submitCode} style="display: flex; flex-direction: column; gap: 12px">
+            <div class="note n-green" role="status"><strong>Check je mail.</strong> We hebben een mail gestuurd naar {email}. Typ hieronder de code uit de mail. Geen mail gezien? Kijk ook even in je spam.</div>
+            <label class="field">Code uit de mail<input class="input" required autocomplete="one-time-code" inputmode="numeric" maxLength={10} value={code} onInput={(e) => setCode(e.target.value)} placeholder="123456" style="font-size: 22px; letter-spacing: 4px" /></label>
+            {err && <div class="note n-orange" role="alert">{err}</div>}
+            <button class="btn full" disabled={busy || code.replace(/\s/g, '').length < 6}>{busy ? 'Controleren…' : 'Inloggen'}</button>
+            <div class="small">Op een computer kun je ook gewoon op de link in de mail klikken.</div>
+            <button type="button" class="link" onClick={() => { setSent(false); setCode(''); setErr(''); }}>Ander e-mailadres of nieuwe code</button>
+          </form>
         ) : (
           <form onSubmit={submit} style="display: flex; flex-direction: column; gap: 12px">
-            <p class="muted" style="margin: 0">Log in met je e-mailadres. Je krijgt een link, een wachtwoord is niet nodig. Nieuwe leden worden eerst goedgekeurd door een beheerder.</p>
+            <p class="muted" style="margin: 0">Log in met je e-mailadres. Je krijgt een code per mail, een wachtwoord is niet nodig. Nieuwe leden worden eerst goedgekeurd door een beheerder.</p>
             <label class="field">E-mailadres<input class="input" type="email" required autocomplete="email" inputmode="email" value={email} onInput={(e) => setEmail(e.target.value)} placeholder="naam@voorbeeld.nl" /></label>
             {err && <div class="note n-orange" role="alert">{err}</div>}
-            <button class="btn full" disabled={busy}>{busy ? 'Versturen…' : 'Stuur inloglink'}</button>
+            <button class="btn full" disabled={busy}>{busy ? 'Versturen…' : 'Stuur inlogcode'}</button>
           </form>
         )}
       </div>

@@ -35,6 +35,11 @@ export async function sendMagicLink(email) {
   if (error) throw new Error(vertaal(error.message));
 }
 
+export async function verifyCode(email, token) {
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+  if (error) throw new Error(/expired|invalid/i.test(error.message) ? 'Deze code klopt niet of is verlopen. Vraag een nieuwe aan.' : vertaal(error.message));
+}
+
 export async function demoLogin(userId) {
   const d = await getDemo();
   d.login(userId);
