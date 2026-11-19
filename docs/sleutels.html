@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleutels voor pushmeldingen</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:16px;background:#F6F7F3;color:#1C211E}
+h1{font-size:20px}code,textarea{font-family:ui-monospace,monospace;font-size:13px}
+textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid #CBD2CC;border-radius:8px;resize:vertical}
+button{min-height:44px;padding:0 16px;border-radius:12px;border:0;background:#1E6B43;color:#fff;font-weight:600;font-size:15px}
+.box{background:#fff;border:1px solid #E1E5DF;border-radius:14px;padding:12px;margin:12px 0}
+.warn{background:#FDF3E1;color:#6B4A12;padding:10px;border-radius:10px;font-size:14px}
+</style></head><body>
+<h1>Sleutels voor pushmeldingen</h1>
+<p>Deze pagina maakt de sleutels voor pushmeldingen. Alles gebeurt op je eigen telefoon of computer; er wordt niets verstuurd. Je hebt dit maar één keer nodig.</p>
+<button id="go">Maak sleutels</button>
+<div id="out" hidden>
+  <div class="box"><b>1. VAPID_PUBLIC_KEY</b> (openbaar)<br><small>Komt in Edge Functions → Secrets én in de SQL hieronder.</small><textarea id="pub" rows="3" readonly></textarea></div>
+  <div class="box"><b>2. VAPID_PRIVATE_KEY</b> (geheim)<br><small>Alleen in Edge Functions → Secrets. Nergens anders plakken.</small><textarea id="priv" rows="2" readonly></textarea></div>
+  <div class="box"><b>3. PUSH_WEBHOOK_SECRET</b> (geheim)<br><small>In Edge Functions → Secrets én als header <code>x-webhook-secret</code> in de Database Webhook.</small><textarea id="sec" rows="2" readonly></textarea></div>
+  <div class="box"><b>4. SQL</b> (in de SQL Editor draaien)<textarea id="sql" rows="3" readonly></textarea></div>
+  <p class="warn">Bewaar deze waarden tot je klaar bent en sluit daarna de pagina. Ververs je de pagina, dan krijg je nieuwe sleutels.</p>
+</div>
+<script>
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+document.getElementById('go').onclick = async () => {
+  const kp = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const pub = b64u(await crypto.subtle.exportKey('raw', kp.publicKey));
+  const priv = (await crypto.subtle.exportKey('jwk', kp.privateKey)).d;
+  const sec = b64u(crypto.getRandomValues(new Uint8Array(24)));
+  document.getElementById('pub').value = pub;
+  document.getElementById('priv').value = priv;
+  document.getElementById('sec').value = sec;
+  document.getElementById('sql').value = "insert into public.app_config (key, value) values ('vapid_public', '" + pub + "') on conflict (key) do update set value = excluded.value;";
+  document.getElementById('out').hidden = false;
+};
+</script>
+</body></html>

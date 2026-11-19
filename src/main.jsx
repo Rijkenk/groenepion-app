@@ -8,6 +8,7 @@ import { Spellen } from './screens/Spellen.jsx';
 import { Agenda } from './screens/Agenda.jsx';
 import { Koop } from './screens/Koop.jsx';
 import { Profiel } from './screens/Profiel.jsx';
+import { Leden, Privacy } from './screens/Leden.jsx';
 
 const LOGO = import.meta.env.BASE_URL + 'logo.png';
 const TABS = [
@@ -31,6 +32,7 @@ function Header({ title, unread, onBell }) {
 }
 
 function Login() {
+  const [privacy, setPrivacy] = useState(false);
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,9 @@ function Login() {
             <button class="btn full" disabled={busy}>{busy ? 'Versturen…' : 'Stuur inlogcode'}</button>
           </form>
         )}
+        <button type="button" class="link" onClick={() => setPrivacy(true)}>Hoe gaan we om met je gegevens?</button>
       </div>
+      {privacy && <Privacy onClose={() => setPrivacy(false)} />}
     </div>
   );
 }
@@ -135,6 +139,7 @@ function App() {
   const [me, setMe] = useState(null);
   const [tab, setTab] = useState('avond');
   const [bell, setBell] = useState(false);
+  const [sheet, setSheet] = useState(null); // { kind: 'leden' | 'privacy', id }
   const [toastMsg, setToastMsg] = useState(null);
   const timer = useRef(null);
   const mainRef = useRef(null);
@@ -164,7 +169,7 @@ function App() {
   const cur = TABS.find((t) => t.id === tab);
   const go = (id) => { setTab(id); if (mainRef.current) mainRef.current.scrollTop = 0; };
   return (
-    <Ctx.Provider value={{ me, toast, refreshMe, go }}>
+    <Ctx.Provider value={{ me, toast, refreshMe, go, showMember: (id) => setSheet({ kind: 'leden', id }), showMembers: () => setSheet({ kind: 'leden' }), showPrivacy: () => setSheet({ kind: 'privacy' }) }}>
       <div class="shell">
         {DEMO && <div class="demo-bar">Demoversie: voorbeelddata, niets wordt bewaard</div>}
         <Header title={cur.title} unread={me.unread} onBell={() => setBell(true)} />
@@ -181,6 +186,8 @@ function App() {
         </nav>
         {toastMsg && <div class={'toast' + (toastMsg.err ? ' err' : '')} role={toastMsg.err ? 'alert' : 'status'}>{toastMsg.text}</div>}
         {bell && <Notifications onClose={() => { setBell(false); refreshMe(); }} />}
+        {sheet && sheet.kind === 'leden' && <Leden startId={sheet.id} onClose={() => setSheet(null)} />}
+        {sheet && sheet.kind === 'privacy' && <Privacy onClose={() => setSheet(null)} />}
       </div>
     </Ctx.Provider>
   );

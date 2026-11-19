@@ -135,7 +135,59 @@ function Detail({ id, onBack }) {
   );
 }
 
+function Zoeklijst() {
+  const act = useAction();
+  const [w, reload, error] = useRpc('list_wanted', {});
+  const [term, setTerm] = useState('');
+  const [max, setMax] = useState('');
+  if (!w) return <Loading error={error} retry={reload} />;
+  const maxCents = max ? Math.round(parseFloat(max.replace(',', '.')) * 100) : null;
+  async function add(e) {
+    e.preventDefault();
+    const r = await act('add_wanted', { p_term: term, p_max_cents: maxCents }, { ok: 'Je krijgt een melding zodra ' + term.trim() + ' in de Koopgoot komt.', reload });
+    if (r) { setTerm(''); setMax(''); }
+  }
+  return (
+    <>
+      <form class="card" onSubmit={add}>
+        <h3>Mijn zoeklijst</h3>
+        <div class="small">Zet hier spellen die je zoekt. Komt er een in de Koopgoot, dan krijg je meteen een melding.</div>
+        <label class="field">Welk spel zoek je?<input class="input" required maxLength={80} value={term} onInput={(e) => setTerm(e.target.value)} placeholder="Bijv. Wingspan" /></label>
+        <label class="field">Maximaal bedrag (optioneel)<input class="input" inputmode="decimal" value={max} onInput={(e) => setMax(e.target.value.replace(/[^0-9,.]/g, ''))} placeholder="Geen maximum" /></label>
+        <button class="btn" disabled={term.trim().length < 2}>Op mijn zoeklijst</button>
+        {w.mine.map((x) => (
+          <div class="row" style="min-height: 44px; border-top: 1px solid var(--line)">
+            <div class="grow"><div style="font-weight: 600; font-size: 14px">{x.term}</div>
+              <div class="small">{x.max_cents != null ? 'tot ' + euro(x.max_cents) : 'elke prijs'}{x.matches ? ' · ' + plural(x.matches, 'advertentie', 'advertenties') + ' te koop' : ''}</div></div>
+            <button type="button" class="link" aria-label={x.term + ' van zoeklijst halen'} onClick={() => act('delete_wanted', { p_id: x.id }, { reload })}>Weghalen</button>
+          </div>
+        ))}
+      </form>
+      <section class="card">
+        <h3>Wat leden zoeken</h3>
+        <div class="small">Heb je een van deze spellen over? Zet hem in de Koopgoot, de zoekers krijgen een melding.</div>
+        {w.all.length === 0 ? <div class="small">Nog niemand zoekt iets.</div> : w.all.map((x) => (
+          <div class="row" style="min-height: 40px">
+            <span class="grow" style="font-size: 14px"><b>{x.term}</b> <span class="small">· {x.names.join(', ')}</span></span>
+            <span class="badge b-sand" style="font-size: 11px; padding: 3px 8px">{x.count}×</span>
+          </div>
+        ))}
+      </section>
+    </>
+  );
+}
+
 export function Koop() {
+  const [view, setView] = useState('koop');
+  return (
+    <>
+      <div role="group" aria-label="Koopgoot"><Chips grid="grid2" options={[{ value: 'koop', label: 'Te koop' }, { value: 'zoek', label: 'Zoeklijst' }]} value={view} onPick={setView} /></div>
+      {view === 'koop' ? <TeKoop /> : <Zoeklijst />}
+    </>
+  );
+}
+
+function TeKoop() {
   const [list, reload, error] = useRpc('list_listings', {});
   const [open, setOpen] = useState(null);
   const [form, setForm] = useState(false);

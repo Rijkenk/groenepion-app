@@ -161,6 +161,33 @@ create table if not exists public.member_games (
 );
 create unique index if not exists member_games_unique on public.member_games (user_id, lower(name));
 
+create table if not exists public.wanted (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  term text not null check (length(trim(term)) between 2 and 80),
+  max_cents int check (max_cents is null or max_cents between 0 and 100000),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists wanted_unique on public.wanted (user_id, lower(term));
+
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Instellingen die de app mag lezen (bijv. de publieke sleutel voor pushmeldingen). Nooit geheimen hierin.
+create table if not exists public.app_config (
+  key text primary key,
+  value text not null
+);
+
+alter table public.profiles add column if not exists bgg_user text not null default '';
+alter table public.member_games add column if not exists bgg_id int;
+
 alter table public.profiles enable row level security;
 alter table public.notifications enable row level security;
 alter table public.avonden enable row level security;
@@ -175,6 +202,9 @@ alter table public.listing_offers enable row level security;
 alter table public.library_games enable row level security;
 alter table public.library_loans enable row level security;
 alter table public.member_games enable row level security;
+alter table public.wanted enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.app_config enable row level security;
 
 -- ============================================================ hulpfuncties
 
@@ -215,6 +245,11 @@ language sql security definer set search_path = public as $$
   insert into notifications (user_id, body) values (uid, msg)
 $$;
 
+create or replace function public.gp_euro(cents int) returns text
+language sql immutable as $$
+  select '€ ' || case when cents % 100 = 0 then (cents / 100)::text else replace(to_char(cents / 100.0, 'FM999990.00'), '.', ',') end
+$$;
+
 -- Nieuwe gebruiker in Supabase Auth -> profiel met status 'pending'.
 create or replace function public.gp_handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -237,7 +272,7 @@ declare uid uuid := auth.uid(); r json;
 begin
   if uid is null then return null; end if;
   select json_build_object('id', id, 'email', email, 'display_name', display_name, 'phone', phone,
-    'bio', bio, 'likes', likes, 'status', status,
+    'bio', bio, 'likes', likes, 'status', status, 'bgg_user', bgg_user, 'since', to_char(created_at, 'YYYY'),
     'unread', (select count(*) from notifications n where n.user_id = p.id and not n.read))
   into r from profiles p where id = uid;
   return r;
@@ -674,6 +709,11 @@ begin
     insert into listings (seller_id, game, price_cents, language, condition, description, pickup)
     values (uid, trim(p_game), p_price_cents, coalesce(p_language, 'NL'), coalesce(p_condition, ''), coalesce(p_description, ''), coalesce(p_pickup, ''))
     returning id into nid;
+    perform gp_notify(w.user_id, 'Op je zoeklijst: ' || trim(p_game) || ' staat in de Koopgoot voor ' || gp_euro(p_price_cents) || ' (van ' || gp_name(uid) || ').')
+      from (select distinct on (user_id) user_id from wanted
+            where user_id <> uid and gp_status(user_id) in ('member', 'admin')
+              and position(lower(trim(term)) in lower(trim(p_game))) > 0
+              and (max_cents is null or p_price_cents <= max_cents)) w;
     return nid;
   end if;
   update listings set game = trim(p_game), price_cents = p_price_cents, language = coalesce(p_language, 'NL'), condition = coalesce(p_condition, ''),
@@ -888,6 +928,224 @@ begin
   perform gp_notify(g.user_id, gp_name(uid) || ' vraagt of je ' || g.name || case when p_kind = 'meenemen'
     then ' meeneemt naar de volgende spelavond.' else ' wilt uitlenen.' end
     || case when coalesce(ph, '') <> '' then ' Bereikbaar via WhatsApp: ' || ph || '.' else ' Spreek elkaar op de spelavond.' end);
+end $$;
+
+-- ============================================================ zoeklijst koopgoot
+
+create or replace function public.list_wanted() returns json
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := gp_require_member();
+begin
+  return json_build_object(
+    'mine', coalesce((select json_agg(json_build_object('id', w.id, 'term', w.term, 'max_cents', w.max_cents,
+        'matches', (select count(*) from listings l where l.status = 'te_koop' and l.seller_id <> uid
+                    and position(lower(w.term) in lower(l.game)) > 0 and (w.max_cents is null or l.price_cents <= w.max_cents)))
+      order by lower(w.term)) from wanted w where w.user_id = uid), '[]'::json),
+    'all', coalesce((select json_agg(x order by x.count desc, lower(x.term)) from (
+        select min(w.term) as term, count(*) as count, bool_or(w.user_id = uid) as mine,
+          json_agg(gp_name(w.user_id) order by gp_name(w.user_id)) as names
+        from wanted w join profiles p on p.id = w.user_id where p.status in ('member', 'admin')
+        group by lower(w.term)) x), '[]'::json));
+end $$;
+
+create or replace function public.add_wanted(p_term text, p_max_cents int) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member(); nid uuid; t text := trim(coalesce(p_term, ''));
+begin
+  if length(t) < 2 then raise exception 'Vul minstens twee letters in.'; end if;
+  if length(t) > 80 then raise exception 'Dat is te lang.'; end if;
+  if exists (select 1 from wanted where user_id = uid and lower(term) = lower(t)) then raise exception '% staat al op je zoeklijst.', t; end if;
+  if (select count(*) from wanted where user_id = uid) >= 50 then raise exception 'Je zoeklijst is vol (50 spellen).'; end if;
+  insert into wanted (user_id, term, max_cents) values (uid, t, p_max_cents) returning id into nid;
+  return nid;
+end $$;
+
+create or replace function public.delete_wanted(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member();
+begin
+  delete from wanted where id = p_id and user_id = uid;
+end $$;
+
+-- ============================================================ leden bekijken
+
+create or replace function public.list_members() returns json
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform gp_require_member();
+  return coalesce((select json_agg(json_build_object('id', p.id, 'name', p.display_name, 'likes', p.likes,
+      'admin', p.status = 'admin', 'games', (select count(*) from member_games g where g.user_id = p.id))
+    order by lower(p.display_name)) from profiles p where p.status in ('member', 'admin')), '[]'::json);
+end $$;
+
+-- Profiel van een lid zonder e-mail of telefoonnummer.
+create or replace function public.get_member(p_user uuid) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := gp_require_member(); r json;
+begin
+  select json_build_object('id', p.id, 'name', p.display_name, 'likes', p.likes, 'bio', p.bio, 'admin', p.status = 'admin',
+      'since', to_char(p.created_at, 'YYYY'), 'me', p.id = uid, 'bgg_user', p.bgg_user,
+      'games', coalesce((select json_agg(json_build_object('id', g.id, 'name', g.name, 'players', g.players, 'minutes', g.minutes, 'weight', g.weight, 'lend', g.lend) order by lower(g.name))
+        from member_games g where g.user_id = p.id), '[]'::json),
+      'listings', coalesce((select json_agg(json_build_object('id', l.id, 'game', l.game, 'price_cents', l.price_cents) order by l.created_at desc)
+        from listings l where l.seller_id = p.id and l.status = 'te_koop'), '[]'::json),
+      'wanted', coalesce((select json_agg(w.term order by lower(w.term)) from wanted w where w.user_id = p.id), '[]'::json))
+  into r from profiles p where p.id = p_user and p.status in ('member', 'admin');
+  if r is null then raise exception 'Dit lid bestaat niet (meer).'; end if;
+  return r;
+end $$;
+
+-- ============================================================ privacy: eigen gegevens
+
+create or replace function public.get_my_data() returns json
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'Niet ingelogd'; end if;
+  return json_build_object(
+    'profiel', (select row_to_json(p) from profiles p where p.id = uid),
+    'collectie', (select json_agg(row_to_json(g)) from member_games g where g.user_id = uid),
+    'zoeklijst', (select json_agg(row_to_json(w)) from wanted w where w.user_id = uid),
+    'advertenties', (select json_agg(row_to_json(l)) from listings l where l.seller_id = uid),
+    'biedingen', (select json_agg(row_to_json(o)) from listing_offers o where o.buyer_id = uid),
+    'tafels', (select json_agg(row_to_json(t)) from game_tables t where t.host_id = uid),
+    'aangemeld_bij_tafels', (select json_agg(row_to_json(tp)) from table_players tp where tp.user_id = uid),
+    'agenda', (select json_agg(row_to_json(e)) from events e where e.host_id = uid),
+    'aanmeldingen_agenda', (select json_agg(row_to_json(a)) from event_attendees a where a.user_id = uid),
+    'spellotheek', (select json_agg(row_to_json(l)) from library_loans l where l.user_id = uid),
+    'meldingen', (select json_agg(row_to_json(n)) from notifications n where n.user_id = uid),
+    'pushapparaten', (select count(*) from push_subscriptions s where s.user_id = uid));
+end $$;
+
+-- Verwijdert je account en alles wat aan je hangt. Kan niet ongedaan worden.
+create or replace function public.delete_my_account() returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'Niet ingelogd'; end if;
+  if gp_status(uid) = 'admin' and (select count(*) from profiles where status = 'admin') = 1 then
+    raise exception 'Je bent de enige beheerder. Maak eerst iemand anders beheerder.';
+  end if;
+  perform gp_notify(t.host_id, gp_name(uid) || ' heeft de app verlaten en is van je tafel ' || t.game || ' gehaald.')
+    from table_players p join game_tables t on t.id = p.table_id where p.user_id = uid and t.host_id <> uid and not t.cancelled;
+  perform gp_notify(p.user_id, 'De tafel ' || t.game || ' van ' || gp_name(uid) || ' gaat niet door.')
+    from game_tables t join table_players p on p.table_id = t.id where t.host_id = uid and not t.cancelled and p.user_id <> uid;
+  delete from auth.users where id = uid;
+  delete from profiles where id = uid;
+end $$;
+
+-- ============================================================ beheer: avonden, spellotheek, mededelingen
+
+create or replace function public.admin_list_avonden() returns json
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform gp_require_admin();
+  return coalesce((select json_agg(json_build_object('id', a.id, 'date', a.date, 'start_time', to_char(a.start_time, 'HH24:MI'),
+      'location', a.location, 'address', a.address, 'note', a.note,
+      'tables', (select count(*) from game_tables t where t.avond_id = a.id and not t.cancelled)) order by a.date)
+    from avonden a where a.date >= (now() at time zone 'Europe/Amsterdam')::date), '[]'::json);
+end $$;
+
+create or replace function public.admin_update_avond(p_id uuid, p_date date, p_start time, p_location text, p_address text, p_note text) returns void
+language plpgsql security definer set search_path = public as $$
+declare old avonden;
+begin
+  perform gp_require_admin();
+  select * into old from avonden where id = p_id;
+  if old.id is null then raise exception 'Deze spelavond bestaat niet meer.'; end if;
+  update avonden set date = p_date, start_time = coalesce(p_start, start_time), location = coalesce(nullif(trim(p_location), ''), location),
+    address = coalesce(nullif(trim(p_address), ''), address), note = coalesce(p_note, '') where id = p_id;
+  if old.date <> p_date or old.start_time <> coalesce(p_start, old.start_time) then
+    perform gp_notify(x.uid, 'De spelavond is verplaatst naar ' || to_char(p_date, 'DD-MM') || ' om ' || to_char(coalesce(p_start, old.start_time), 'HH24:MI') || '.')
+      from (select t.host_id as uid from game_tables t where t.avond_id = p_id and not t.cancelled
+            union select p.user_id from table_players p join game_tables t on t.id = p.table_id where t.avond_id = p_id and not t.cancelled) x;
+  end if;
+end $$;
+
+create or replace function public.admin_cancel_avond(p_id uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare a avonden;
+begin
+  perform gp_require_admin();
+  select * into a from avonden where id = p_id;
+  if a.id is null then raise exception 'Deze spelavond bestaat niet meer.'; end if;
+  perform gp_notify(x.uid, 'De spelavond van ' || to_char(a.date, 'DD-MM') || ' gaat niet door.' || coalesce(' ' || nullif(trim(p_reason), ''), ''))
+    from (select t.host_id as uid from game_tables t where t.avond_id = p_id and not t.cancelled
+          union select p.user_id from table_players p join game_tables t on t.id = p.table_id where t.avond_id = p_id and not t.cancelled) x;
+  delete from avonden where id = p_id;
+end $$;
+
+create or replace function public.admin_remove_library_game(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform gp_require_admin();
+  update library_games set active = false where id = p_id;
+  update library_loans set state = 'geannuleerd' where game_id = p_id and state = 'aangevraagd';
+end $$;
+
+create or replace function public.admin_broadcast(p_text text) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  perform gp_require_admin();
+  if length(trim(coalesce(p_text, ''))) < 3 then raise exception 'Schrijf eerst een bericht.'; end if;
+  if length(p_text) > 500 then raise exception 'Het bericht is te lang (max. 500 tekens).'; end if;
+  insert into notifications (user_id, body) select id, 'Mededeling: ' || trim(p_text) from profiles where status in ('member', 'admin');
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- ============================================================ pushmeldingen
+
+create or replace function public.get_push_config() returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object('vapid_public', (select value from app_config where key = 'vapid_public'))
+$$;
+
+create or replace function public.save_push_subscription(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'Niet ingelogd'; end if;
+  if p_endpoint !~ '^https://' or length(p_endpoint) > 1000 then raise exception 'Ongeldig adres'; end if;
+  insert into push_subscriptions (user_id, endpoint, p256dh, auth) values (uid, p_endpoint, p_p256dh, p_auth)
+  on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth;
+end $$;
+
+create or replace function public.delete_push_subscription(p_endpoint text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from push_subscriptions where endpoint = p_endpoint and user_id = auth.uid();
+end $$;
+
+-- ============================================================ BoardGameGeek
+
+-- Zet spellen uit je BGG-collectie in je eigen collectie. Bestaande spellen (zelfde naam of BGG-nummer) worden bijgewerkt.
+create or replace function public.import_my_games(p_bgg_user text, p_games json) returns json
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member(); g json; added int := 0; updated int := 0; n text; bid int; ex uuid;
+begin
+  if json_array_length(p_games) > 2000 then raise exception 'Te veel spellen in één keer.'; end if;
+  update profiles set bgg_user = left(trim(coalesce(p_bgg_user, '')), 60) where id = uid;
+  for g in select * from json_array_elements(p_games) loop
+    n := left(trim(coalesce(g->>'name', '')), 120);
+    bid := nullif(g->>'bgg_id', '')::int;
+    continue when n = '';
+    select id into ex from member_games where user_id = uid and (bgg_id = bid or lower(name) = lower(n)) limit 1;
+    if ex is null then
+      insert into member_games (user_id, name, players, minutes, weight, bgg_id)
+      values (uid, n, left(coalesce(g->>'players', ''), 20), nullif(g->>'minutes', '')::int,
+        case when g->>'weight' in ('Licht', 'Middel', 'Zwaar') then g->>'weight' else '' end, bid)
+      on conflict do nothing;
+      if found then added := added + 1; end if;
+    else
+      update member_games set bgg_id = coalesce(bid, bgg_id),
+        players = case when players = '' then left(coalesce(g->>'players', ''), 20) else players end,
+        minutes = coalesce(minutes, nullif(g->>'minutes', '')::int) where id = ex;
+      updated := updated + 1;
+    end if;
+  end loop;
+  return json_build_object('added', added, 'updated', updated);
 end $$;
 
 -- ============================================================ rechten

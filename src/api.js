@@ -62,6 +62,46 @@ export async function rpc(fn, args = {}) {
   return data;
 }
 
+// Roept een Supabase Edge Function aan (bijv. de BGG-import).
+export async function callFunction(name, body) {
+  if (DEMO) return (await getDemo()).fn(name, body);
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    let msg = error.message;
+    try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch { /* geen json */ }
+    if (/Failed to send|not found|404/i.test(msg)) msg = 'Deze koppeling is nog niet aangezet. Vraag het bestuur.';
+    throw new Error(vertaal(msg));
+  }
+  return data;
+}
+
+// Pushmeldingen: werkt in Chrome/Android en op iPhone alleen vanaf het beginscherm (iOS 16.4+).
+export function pushSupported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function b64ToBytes(b64) {
+  const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+export async function pushState() {
+  if (!pushSupported() || DEMO) return { supported: pushSupported(), on: false, key: null };
+  const cfg = await rpc('get_push_config');
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && (await reg.pushManager.getSubscription());
+  return { supported: true, on: !!sub && Notification.permission === 'granted', key: cfg && cfg.vapid_public };
+}
+export async function enablePush(key) {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Je hebt meldingen geweigerd. Zet ze aan in de instellingen van je telefoon.');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }));
+  const j = sub.toJSON();
+  await rpc('save_push_subscription', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+}
+export async function disablePush() {
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && (await reg.pushManager.getSubscription());
+  if (sub) { await rpc('delete_push_subscription', { p_endpoint: sub.endpoint }); await sub.unsubscribe(); }
+}
+
 function vertaal(msg) {
   if (/rate limit/i.test(msg)) return 'Even wachten: er zijn net te veel inlogmails verstuurd. Probeer het over een minuut opnieuw.';
   if (/Failed to fetch|NetworkError/i.test(msg)) return 'Geen verbinding. Controleer je internet en probeer het opnieuw.';

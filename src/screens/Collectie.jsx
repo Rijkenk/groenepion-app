@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { useRpc, useAction, Loading, Chips, coverColor } from '../ui.jsx';
+import { useApp, useRpc, useAction, Loading, Chips, coverColor } from '../ui.jsx';
 
 const meta = (g) => [g.players && g.players + ' spelers', g.minutes && g.minutes + ' min', g.weight].filter(Boolean).join(' · ');
 
@@ -54,6 +54,7 @@ export function MijnCollectie() {
 // Spellotheek-tab: wat hebben de leden zelf?
 export function SpellenVanLeden() {
   const act = useAction();
+  const { showMember } = useApp();
   const [games, reload, error] = useRpc('list_member_games', {});
   const [q, setQ] = useState('');
   const [openName, setOpenName] = useState(null);
@@ -86,7 +87,7 @@ export function SpellenVanLeden() {
                 <div class="small">De eigenaar krijgt een melding met je naam en, als je dat in je profiel hebt ingevuld, je telefoonnummer.</div>
                 {others.map((o) => (
                   <div class="row wrap" style="gap: 8px">
-                    <span class="avatar">{o.name.charAt(0)}</span><span class="grow" style="font-size: 14px">{o.name}</span>
+                    <span class="avatar">{o.name.charAt(0)}</span><button type="button" class="link grow" style="text-align: left; font-size: 14px" onClick={() => showMember(o.user_id)}>{o.name}</button>
                     <button type="button" class="btn sm" onClick={() => ask(g, o, 'meenemen')}>Meenemen naar spelavond?</button>
                     {o.lend && <button type="button" class="btn sm ghost" onClick={() => ask(g, o, 'lenen')}>Lenen?</button>}
                   </div>

@@ -90,5 +90,15 @@ export async function createDemo() {
     login: (id) => { current = id; },
     logout: () => { current = null; },
     rpc: (fn, args) => rpc(fn, args),
+    fn: async (name, body) => {
+      if (name !== 'bgg-import') throw new Error('Onbekende functie');
+      await new Promise((r) => setTimeout(r, 600));
+      if (!body.username) throw new Error('Vul je BGG-gebruikersnaam in.');
+      return { games: [
+        { bgg_id: 266192, name: 'Wingspan', players: '1-5', minutes: 70, weight: 'Middel' },
+        { bgg_id: 230802, name: 'Azul', players: '2-4', minutes: 45, weight: 'Licht' },
+        { bgg_id: 342942, name: 'Ark Nova', players: '1-4', minutes: 150, weight: 'Zwaar' },
+      ] };
+    },
   };
 }
