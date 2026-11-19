@@ -195,6 +195,33 @@ await t('spellotheek: reserveren voor spelavond en lenen, wisselen en annuleren'
   assert.equal(await as.joris('toggle_library_request', { p_game: g, p_kind: 'wacht' }), 'wacht');
   assert.equal(await as.joris('toggle_library_request', { p_game: g, p_kind: 'wacht' }), null);
 });
+await t('collectie: toevoegen, dubbel weigeren, samenvoegen per spel, vragen om mee te nemen', async () => {
+  const a = await as.sanne('save_my_game', { p_id: null, p_name: 'Cascadia', p_players: '1-4', p_minutes: 45, p_weight: 'Licht', p_lend: true });
+  await rejects(as.sanne('save_my_game', { p_id: null, p_name: ' cascadia ', p_players: '', p_minutes: null, p_weight: '', p_lend: false }), /al in je collectie/);
+  await as.joris('save_my_game', { p_id: null, p_name: 'CASCADIA', p_players: '', p_minutes: null, p_weight: '', p_lend: false });
+  await as.joris('save_my_game', { p_id: null, p_name: 'Ark Nova', p_players: '1-4', p_minutes: 150, p_weight: 'Zwaar', p_lend: false });
+  const all = await as.eva('list_member_games');
+  assert.equal(all.length, 2);
+  const cas = all.find((g) => g.name.toLowerCase() === 'cascadia');
+  assert.equal(cas.owners.length, 2);
+  assert.equal(cas.players, '1-4');
+  assert.equal(cas.mine, false);
+  assert.equal((await as.sanne('list_my_games')).length, 1);
+  await rejects(as.joris('save_my_game', { p_id: a, p_name: 'Gestolen', p_players: '', p_minutes: null, p_weight: '', p_lend: false }), /niet in jouw collectie/);
+  await as.joris('delete_my_game', { p_id: a });
+  assert.equal((await as.sanne('list_my_games')).length, 1);
+  const ark = all.find((g) => g.name === 'Ark Nova').owners[0].game_id;
+  await rejects(as.eva('ask_member_game', { p_game: ark, p_kind: 'lenen' }), /niet uitgeleend/);
+  await as.eva('ask_member_game', { p_game: ark, p_kind: 'meenemen' });
+  assert.match((await as.joris('list_notifications'))[0].body, /^Eva vraagt of je Ark Nova meeneemt/);
+  await rejects(as.eva('ask_member_game', { p_game: ark, p_kind: 'meenemen' }), /vandaag al gevraagd/);
+  await as.eva('ask_member_game', { p_game: a, p_kind: 'lenen' });
+  assert.match((await as.sanne('list_notifications'))[0].body, /Cascadia wilt uitlenen/);
+  await rejects(as.sanne('ask_member_game', { p_game: a, p_kind: 'meenemen' }), /eigen spel/);
+  await as.admin('admin_set_status', { p_user: U.joris, p_status: 'blocked' });
+  assert.equal((await as.eva('list_member_games')).length, 1);
+  await as.admin('admin_set_status', { p_user: U.joris, p_status: 'member' });
+});
 await t('meldingen gelezen markeren', async () => {
   assert.ok((await as.sanne('get_me')).unread > 0);
   await as.sanne('mark_notifications_read');

@@ -20,6 +20,8 @@ function OfferForm({ avond, onDone, onClose }) {
   const [f, setF] = useState({ game: '', max: 4, pre: 0, start: avond.start_time || '20:00', dur: 90, weight: 'Middel', kind: 'Strategie', exp: 'Beginner', mode: 'open' });
   const set = (p) => setF({ ...f, ...p });
   const still = f.max - 1 - f.pre;
+  const [mine] = useRpc('list_my_games', {});
+  const pick = (name) => { const g = (mine || []).find((x) => x.name.toLowerCase() === name.trim().toLowerCase()); return g && g.weight ? { weight: g.weight } : {}; };
   async function submit(e) {
     e.preventDefault();
     const r = await act('create_table', { p_avond: avond.id, p_game: f.game, p_max: f.max, p_pre: f.pre, p_start: f.start, p_duration: f.dur, p_weight: f.weight, p_kind: f.kind, p_exp: f.exp, p_mode: f.mode }, { ok: 'Je tafel staat erop.' });
@@ -28,7 +30,8 @@ function OfferForm({ avond, onDone, onClose }) {
   return (
     <form class="card strong" onSubmit={submit} style="gap: 14px">
       <div class="row between"><h3>Tafel aanbieden</h3><button type="button" class="round" style="background: #E6ECE7; color: var(--text)" onClick={onClose} aria-label="Sluiten"><Icon.close /></button></div>
-      <label class="field">Welk spel?<input class="input" required maxLength={120} value={f.game} onInput={(e) => set({ game: e.target.value })} placeholder="Bijv. Cascadia" /></label>
+      <label class="field">Welk spel?<input class="input" required maxLength={120} value={f.game} list="mijn-spellen" autocomplete="off" onInput={(e) => set({ game: e.target.value, ...pick(e.target.value) })} placeholder="Bijv. Cascadia" /></label>
+      {mine && mine.length > 0 && <datalist id="mijn-spellen">{mine.map((g) => <option value={g.name} />)}</datalist>}
       <div class="field" style="display: flex; flex-direction: column; gap: 6px"><b style="font-size: 14px">Aantal spelers (inclusief jij)</b>
         <Stepper label="Aantal spelers" value={f.max} min={2} max={12} onChange={(v) => set({ max: v, pre: Math.min(f.pre, v - 2) })} /></div>
       <div style="display: flex; flex-direction: column; gap: 6px"><b style="font-size: 14px">Plekken al bezet (bijv. vrienden die meespelen)</b>

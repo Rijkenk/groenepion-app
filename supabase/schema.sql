@@ -148,6 +148,19 @@ create table if not exists public.library_loans (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.member_games (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  name text not null,
+  players text not null default '',
+  minutes int,
+  weight text not null default '',
+  lend boolean not null default false,
+  bgg_id int,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists member_games_unique on public.member_games (user_id, lower(name));
+
 alter table public.profiles enable row level security;
 alter table public.notifications enable row level security;
 alter table public.avonden enable row level security;
@@ -161,6 +174,7 @@ alter table public.listings enable row level security;
 alter table public.listing_offers enable row level security;
 alter table public.library_games enable row level security;
 alter table public.library_loans enable row level security;
+alter table public.member_games enable row level security;
 
 -- ============================================================ hulpfuncties
 
@@ -798,6 +812,82 @@ begin
   select name into gname from library_games where id = l.game_id;
   update library_loans set state = p_state where id = p_loan;
   if p_state = 'uitgeleend' then perform gp_notify(l.user_id, gname || ' staat voor je klaar. Veel speelplezier!'); end if;
+end $$;
+
+-- ============================================================ collecties van leden
+
+create or replace function public.list_my_games() returns json
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := gp_require_member();
+begin
+  return coalesce((select json_agg(json_build_object('id', g.id, 'name', g.name, 'players', g.players, 'minutes', g.minutes, 'weight', g.weight, 'lend', g.lend) order by lower(g.name))
+    from member_games g where g.user_id = uid), '[]'::json);
+end $$;
+
+create or replace function public.save_my_game(p_id uuid, p_name text, p_players text, p_minutes int, p_weight text, p_lend boolean) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member(); nid uuid; n text := trim(coalesce(p_name, ''));
+begin
+  if n = '' then raise exception 'Vul de naam van het spel in.'; end if;
+  if length(n) > 120 then raise exception 'De naam is te lang.'; end if;
+  if coalesce(p_weight, '') not in ('', 'Licht', 'Middel', 'Zwaar') then raise exception 'Ongeldige zwaarte'; end if;
+  if exists (select 1 from member_games where user_id = uid and lower(name) = lower(n) and id is distinct from p_id) then
+    raise exception '% staat al in je collectie.', n;
+  end if;
+  if p_id is null then
+    if (select count(*) from member_games where user_id = uid) >= 1000 then raise exception 'Je collectie is vol.'; end if;
+    insert into member_games (user_id, name, players, minutes, weight, lend)
+    values (uid, n, left(coalesce(p_players, ''), 20), p_minutes, coalesce(p_weight, ''), coalesce(p_lend, false)) returning id into nid;
+    return nid;
+  end if;
+  update member_games set name = n, players = left(coalesce(p_players, ''), 20), minutes = p_minutes, weight = coalesce(p_weight, ''), lend = coalesce(p_lend, false)
+  where id = p_id and user_id = uid returning id into nid;
+  if nid is null then raise exception 'Dit spel staat niet in jouw collectie.'; end if;
+  return nid;
+end $$;
+
+create or replace function public.delete_my_game(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member();
+begin
+  delete from member_games where id = p_id and user_id = uid;
+end $$;
+
+-- Alle spellen van goedgekeurde leden, samengevoegd per naam, met wie ze heeft.
+create or replace function public.list_member_games() returns json
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := gp_require_member();
+begin
+  return coalesce((select json_agg(x order by lower(x.name)) from (
+    select min(g.name) as name,
+      max(g.players) filter (where g.players <> '') as players,
+      max(g.minutes) as minutes,
+      max(g.weight) filter (where g.weight <> '') as weight,
+      bool_or(g.user_id = uid) as mine,
+      json_agg(json_build_object('game_id', g.id, 'user_id', g.user_id, 'name', gp_name(g.user_id), 'lend', g.lend, 'me', g.user_id = uid) order by gp_name(g.user_id)) as owners
+    from member_games g join profiles p on p.id = g.user_id
+    where p.status in ('member', 'admin')
+    group by lower(g.name)) x), '[]'::json);
+end $$;
+
+-- Vraag een lid om een spel mee te nemen naar de spelavond of uit te lenen. Het lid krijgt een melding.
+create or replace function public.ask_member_game(p_game uuid, p_kind text) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := gp_require_member(); g member_games; ph text;
+begin
+  if p_kind not in ('meenemen', 'lenen') then raise exception 'Ongeldige keuze'; end if;
+  select * into g from member_games where id = p_game;
+  if g.id is null then raise exception 'Dit spel bestaat niet meer.'; end if;
+  if g.user_id = uid then raise exception 'Dit is je eigen spel.'; end if;
+  if p_kind = 'lenen' and not g.lend then raise exception 'Dit spel wordt niet uitgeleend.'; end if;
+  if exists (select 1 from notifications n where n.user_id = g.user_id and n.created_at > now() - interval '1 day'
+             and n.body like gp_name(uid) || ' vraagt of je ' || g.name || '%') then
+    raise exception 'Je hebt dit vandaag al gevraagd. % heeft een melding gekregen.', gp_name(g.user_id);
+  end if;
+  select phone into ph from profiles where id = uid;
+  perform gp_notify(g.user_id, gp_name(uid) || ' vraagt of je ' || g.name || case when p_kind = 'meenemen'
+    then ' meeneemt naar de volgende spelavond.' else ' wilt uitlenen.' end
+    || case when coalesce(ph, '') <> '' then ' Bereikbaar via WhatsApp: ' || ph || '.' else ' Spreek elkaar op de spelavond.' end);
 end $$;
 
 -- ============================================================ rechten

@@ -71,6 +71,17 @@ export async function createDemo() {
   await lib('Weerwolven van Wakkerdam', '8-18', 30, 'party', 'Licht');
   await lib('Terraforming Mars', '1-5', 120, 'strategie', 'Zwaar');
   await lib('Cascadia', '1-4', 45, 'familie', 'Licht');
+  const own = (uid, name, players, minutes, weight, lend) => rpc('save_my_game', { p_id: null, p_name: name, p_players: players, p_minutes: minutes, p_weight: weight, p_lend: lend }, uid);
+  await own(K, 'Het Witte Kasteel', '1-4', 80, 'Middel', false);
+  await own(K, 'Cascadia', '1-4', 45, 'Licht', true);
+  await own(S, 'Nemesis: Retaliation', '1-4', 180, 'Zwaar', false);
+  await own(S, 'Cascadia', '1-4', 45, 'Licht', true);
+  await own(S, 'Spirit Island', '1-4', 120, 'Zwaar', true);
+  await own(J, 'Ark Nova', '1-4', 150, 'Zwaar', false);
+  await own(J, 'Race for the Galaxy', '2-4', 45, 'Middel', false);
+  await own(E, 'Sky Team', '2', 20, 'Licht', true);
+  await own(E, 'Brass: Birmingham', '2-4', 120, 'Zwaar', false);
+  await own(L, 'Codenames', '4-8', 15, 'Licht', true);
   await db.query('update public.notifications set read = true');
 
   return {

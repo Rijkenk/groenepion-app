@@ -1,7 +1,18 @@
 import { useState } from 'preact/hooks';
 import { useRpc, useAction, Loading, Chips, coverColor } from '../ui.jsx';
+import { SpellenVanLeden } from './Collectie.jsx';
 
 export function Spellen() {
+  const [view, setView] = useState('club');
+  return (
+    <>
+      <div role="group" aria-label="Welke spellen"><Chips grid="grid2" options={[{ value: 'club', label: 'Clubspellen' }, { value: 'leden', label: 'Bij leden' }]} value={view} onPick={setView} /></div>
+      {view === 'club' ? <Clubspellen /> : <SpellenVanLeden />}
+    </>
+  );
+}
+
+function Clubspellen() {
   const [games, reload, error] = useRpc('list_library', {});
   const act = useAction();
   const [q, setQ] = useState('');

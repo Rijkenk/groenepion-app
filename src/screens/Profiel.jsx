@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { useApp, useRpc, useAction, Loading, Chips, Person, longDate, InstallHint } from '../ui.jsx';
 import { signOut, DEMO } from '../api.js';
+import { MijnCollectie } from './Collectie.jsx';
 
 function nextFriday() { const d = new Date(); const add = (5 - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + add); return d.toISOString().slice(0, 10); }
 
@@ -91,9 +92,10 @@ export function Profiel() {
         <label class="field">Over jou (optioneel)<textarea class="input" maxLength={500} value={f.bio} onInput={(e) => set({ bio: e.target.value })} /></label>
         <button class="btn">Opslaan</button>
       </form>
+      <MijnCollectie />
       <section class="card">
         <div class="row between"><h3>BoardGameGeek</h3><span class="badge b-grey">Binnenkort</span></div>
-        <div class="small">Straks koppel je je BGG-gebruikersnaam, dan vult je collectie zich vanzelf en zien anderen wat je kunt meenemen.</div>
+        <div class="small">Straks koppel je je BGG-gebruikersnaam, dan vult je collectie hieronder zich vanzelf.</div>
       </section>
       {me.status === 'admin' && <Beheer />}
       <button class="btn grey" onClick={signOut}>Uitloggen</button>
