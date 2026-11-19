@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useEffect, useState, useCallback, useRef } from 'preact/hooks';
 import './style.css';
 import { init, getSession, onAuthChange, sendMagicLink, verifyCode, demoLogin, demoUsers, signOut, rpc, DEMO } from './api.js';
-import { Ctx, Icon } from './ui.jsx';
+import { Ctx, Icon, InstallHint } from './ui.jsx';
 import { Avond } from './screens/Avond.jsx';
 import { Spellen } from './screens/Spellen.jsx';
 import { Agenda } from './screens/Agenda.jsx';
@@ -53,6 +53,7 @@ function Login() {
       <Header title="Welkom" />
       <div class="center">
         <h2 style="font-size: 24px">Speel mee bij De Groene Pion</h2>
+        {!DEMO && <InstallHint />}
         {DEMO ? (
           <>
             <p class="muted" style="margin: 0">Dit is de demoversie. Kies met wie je wilt inloggen. Alles begint opnieuw als je de pagina ververst.</p>
@@ -168,6 +169,7 @@ function App() {
         {DEMO && <div class="demo-bar">Demoversie: voorbeelddata, niets wordt bewaard</div>}
         <Header title={cur.title} unread={me.unread} onBell={() => setBell(true)} />
         <main class="main" ref={mainRef}>
+          <InstallHint compact />
           {tab === 'avond' && <Avond />}
           {tab === 'spellen' && <Spellen />}
           {tab === 'agenda' && <Agenda />}

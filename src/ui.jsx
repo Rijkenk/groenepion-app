@@ -106,3 +106,24 @@ export const Icon = {
   close: () => <svg width="18" height="18" viewBox="0 0 24 24" {...ic} stroke-width="2.2"><path d="M6 6l12 12M18 6L6 18" /></svg>,
   back: () => <svg width="20" height="20" viewBox="0 0 24 24" {...ic}><path d="M15 5l-7 7 7 7" /></svg>,
 };
+
+// Uitleg "zet op beginscherm": zichtbaar zolang de app niet vanaf het beginscherm draait.
+export function isStandalone() {
+  return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+export function InstallHint({ compact }) {
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem('gp-install-hint') === 'weg'; } catch { return false; } });
+  if (isStandalone() || (compact && hidden)) return null;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const android = /Android/.test(navigator.userAgent);
+  const hide = () => { try { localStorage.setItem('gp-install-hint', 'weg'); } catch { /* geen opslag */ } setHidden(true); };
+  return (
+    <div class="note n-sand" style="display: flex; flex-direction: column; gap: 6px">
+      <b style="color: var(--text)">Zet de app op je beginscherm</b>
+      <span>{ios ? 'Tik in Safari onderin op Delen (vierkantje met pijl omhoog) en kies "Zet op beginscherm". Open de app daarna vanaf je beginscherm en log daar in.'
+        : android ? 'Tik in Chrome rechtsboven op het menu (drie puntjes) en kies "App installeren" of "Toevoegen aan startscherm". Open de app daarna vanaf je startscherm.'
+        : 'Open deze pagina op je telefoon en zet hem op je beginscherm: iPhone via Safari → Delen → "Zet op beginscherm", Android via Chrome → menu → "App installeren".'}</span>
+      {compact && <button class="link" onClick={hide}>Niet meer tonen</button>}
+    </div>
+  );
+}

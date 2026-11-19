@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { useApp, useRpc, useAction, Loading, Chips, Person, longDate } from '../ui.jsx';
+import { useApp, useRpc, useAction, Loading, Chips, Person, longDate, InstallHint } from '../ui.jsx';
 import { signOut, DEMO } from '../api.js';
 
 function nextFriday() { const d = new Date(); const add = (5 - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + add); return d.toISOString().slice(0, 10); }
@@ -80,6 +80,7 @@ export function Profiel() {
   const set = (p) => setF({ ...f, ...p });
   return (
     <>
+      <InstallHint />
       <form class="card" onSubmit={(e) => { e.preventDefault(); act('update_profile', { p_name: f.name, p_phone: f.phone, p_bio: f.bio, p_likes: f.likes }, { ok: 'Profiel opgeslagen.' }); }}>
         <div class="row"><span class="avatar gold" style="width: 48px; height: 48px; border-radius: 24px; font-size: 20px">{(f.name || '?').charAt(0)}</span>
           <div class="grow"><div class="title">{f.name || 'Jouw naam'}</div><div class="small">{me.email}{me.status === 'admin' ? ' · beheerder' : ''}</div></div></div>
@@ -93,10 +94,6 @@ export function Profiel() {
       <section class="card">
         <div class="row between"><h3>BoardGameGeek</h3><span class="badge b-grey">Binnenkort</span></div>
         <div class="small">Straks koppel je je BGG-gebruikersnaam, dan vult je collectie zich vanzelf en zien anderen wat je kunt meenemen.</div>
-      </section>
-      <section class="card">
-        <h3>App op je beginscherm</h3>
-        <div class="small">iPhone: tik in Safari op Delen en kies "Zet op beginscherm". Android: tik in Chrome op het menu en kies "App installeren".</div>
       </section>
       {me.status === 'admin' && <Beheer />}
       <button class="btn grey" onClick={signOut}>Uitloggen</button>
