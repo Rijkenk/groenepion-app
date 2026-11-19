@@ -1,0 +1,22 @@
+{
+  "name": "groenepion-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:demo": "vite build --mode demo",
+    "preview": "vite preview",
+    "test": "node test/logic.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.1",
+    "preact": "^11.2.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@preact/preset-vite": "^2.10.6",
+    "vite": "^8.3.8"
+  },
+  "private": true,
+  "type": "module"
+}
