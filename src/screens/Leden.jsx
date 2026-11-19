@@ -46,8 +46,8 @@ function MemberProfile({ id, onBack, onClose }) {
         {m.likes && <div style="font-size: 14px"><b>Speelt graag:</b> {m.likes}</div>}
         {m.bio && <div style="font-size: 14px; white-space: pre-line">{m.bio}</div>}
         {m.wanted.length > 0 && <div style="font-size: 14px"><b>Zoekt:</b> {m.wanted.join(', ')}</div>}
-        {m.listings.length > 0 && <section class="card" style="gap: 6px"><h3>Te koop in de Koopgoot</h3>
-          {m.listings.map((l) => <div class="row between" style="font-size: 14px"><span>{l.game}</span><b>{euro(l.price_cents)}</b></div>)}</section>}
+        {m.listings.length > 0 && <section class="card" style="gap: 6px"><h3>In de Koopgoot</h3>
+          {m.listings.map((l) => <div class="row between" style="font-size: 14px"><span>{l.game}</span><b>{l.mode === 'ruil' ? 'te ruil' : euro(l.price_cents) + (l.mode === 'beide' ? ' of ruilen' : '')}</b></div>)}</section>}
         <section class="card" style="gap: 6px">
           <h3>Collectie ({m.games.length})</h3>
           {m.games.length === 0 ? <div class="small">{m.me ? 'Je hebt nog geen spellen ingevuld.' : m.name + ' heeft nog geen spellen ingevuld.'}</div> : m.games.map((g) => (

@@ -64,6 +64,7 @@ export async function createDemo() {
   await sell(S, 'Libertalia', 2000, 'NL', 'goede staat', 'Compleet, alle kaarten en munten aanwezig.', 'Ophalen op de spelavond of in Almelo.');
   await sell(J, 'Race for the Galaxy', 3000, 'EN', 'gesleeved', 'Met de uitbreidingen The Gathering Storm en Rebel vs Imperium.', 'Ophalen op de spelavond.');
   await sell(E, 'Sky Team', 1500, 'NL', 'als nieuw', 'Twee keer gespeeld.', 'Ophalen in Wierden of op de spelavond.');
+  await rpc('save_listing', { p_id: null, p_game: 'Dune: Imperium', p_price_cents: 0, p_language: 'EN', p_condition: 'goede staat', p_description: 'Basisspel, compleet.', p_pickup: 'Ruilen op de spelavond.', p_mode: 'ruil', p_trade_wish: 'Iets coöperatiefs, bijv. Spirit Island of Paleo' }, L);
   await sell(K, 'Cascadero', 1500, 'NL', 'goede staat', 'Compleet en weinig gespeeld.', 'Ophalen op de spelavond of in Almelo.');
   const lib = (name, players, minutes, kind, weight) => rpc('admin_save_library_game', { p_id: null, p_name: name, p_players: players, p_minutes: minutes, p_kind: kind, p_weight: weight }, K);
   await lib('Azul', '2-4', 40, 'familie', 'Licht');

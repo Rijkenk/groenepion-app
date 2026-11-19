@@ -186,6 +186,11 @@ create table if not exists public.app_config (
 );
 
 alter table public.profiles add column if not exists bgg_user text not null default '';
+alter table public.listings add column if not exists mode text not null default 'verkoop' check (mode in ('verkoop', 'ruil', 'beide'));
+alter table public.listings add column if not exists trade_wish text not null default '';
+alter table public.listing_offers add column if not exists trade_game text not null default '';
+alter table public.listing_offers drop constraint if exists listing_offers_kind_check;
+alter table public.listing_offers add constraint listing_offers_kind_check check (kind in ('kopen', 'bod', 'ruil'));
 alter table public.member_games add column if not exists bgg_id int;
 
 alter table public.profiles enable row level security;
@@ -666,7 +671,7 @@ language plpgsql stable security definer set search_path = public as $$
 declare uid uuid := gp_require_member();
 begin
   return coalesce((select json_agg(x order by x.created_at desc) from (
-    select l.id, l.game, l.price_cents, l.language, l.condition, l.status, l.created_at, gp_name(l.seller_id) as seller_name,
+    select l.id, l.game, l.price_cents, l.mode, l.trade_wish, l.language, l.condition, l.status, l.created_at, gp_name(l.seller_id) as seller_name,
       (l.seller_id = uid) as mine,
       (select state from listing_offers o where o.listing_id = l.id and o.buyer_id = uid and o.state in ('pending', 'accepted')) as my_offer,
       case when l.seller_id = uid then (select count(*) from listing_offers o where o.listing_id = l.id and o.state = 'pending') else 0 end as open_offers
@@ -686,38 +691,45 @@ begin
     select p.phone, gp_name(p.id) into contact, contact_name from listing_offers o join profiles p on p.id = o.buyer_id
       where o.listing_id = l.id and o.state = 'accepted' limit 1;
   end if;
-  select json_build_object('id', l.id, 'game', l.game, 'price_cents', l.price_cents, 'language', l.language, 'condition', l.condition,
+  select json_build_object('id', l.id, 'game', l.game, 'price_cents', l.price_cents, 'mode', l.mode, 'trade_wish', l.trade_wish, 'language', l.language, 'condition', l.condition,
     'description', l.description, 'pickup', l.pickup, 'status', l.status, 'created_at', l.created_at,
     'seller_name', gp_name(l.seller_id), 'mine', l.seller_id = uid,
     'seller_since', (select to_char(created_at, 'YYYY') from profiles where id = l.seller_id),
     'seller_sold', (select count(*) from listings x where x.seller_id = l.seller_id and x.status = 'verkocht'),
     'seller_likes', (select likes from profiles where id = l.seller_id),
-    'my_offer', case when mo.id is null then null else json_build_object('id', mo.id, 'kind', mo.kind, 'amount_cents', mo.amount_cents, 'state', mo.state) end,
+    'my_offer', case when mo.id is null then null else json_build_object('id', mo.id, 'kind', mo.kind, 'amount_cents', mo.amount_cents, 'trade_game', mo.trade_game, 'state', mo.state) end,
     'contact_phone', contact, 'contact_name', contact_name,
     'offers', case when l.seller_id = uid then coalesce((select json_agg(json_build_object('id', o.id, 'buyer_name', gp_name(o.buyer_id), 'kind', o.kind,
-        'amount_cents', o.amount_cents, 'state', o.state) order by o.created_at) from listing_offers o where o.listing_id = l.id and o.state in ('pending', 'accepted')), '[]'::json)
+        'amount_cents', o.amount_cents, 'trade_game', o.trade_game, 'state', o.state) order by o.created_at) from listing_offers o where o.listing_id = l.id and o.state in ('pending', 'accepted')), '[]'::json)
       else '[]'::json end)
   into r;
   return r;
 end $$;
 
-create or replace function public.save_listing(p_id uuid, p_game text, p_price_cents int, p_language text, p_condition text, p_description text, p_pickup text) returns uuid
+drop function if exists public.save_listing(uuid, text, int, text, text, text, text);
+create or replace function public.save_listing(p_id uuid, p_game text, p_price_cents int, p_language text, p_condition text, p_description text, p_pickup text,
+  p_mode text default 'verkoop', p_trade_wish text default '') returns uuid
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := gp_require_member(); nid uuid;
+declare uid uuid := gp_require_member(); nid uuid; m text := coalesce(p_mode, 'verkoop'); price int;
 begin
+  if m not in ('verkoop', 'ruil', 'beide') then raise exception 'Kies verkopen, ruilen of allebei.'; end if;
+  price := case when m = 'ruil' then 0 else p_price_cents end;
+  if price is null then raise exception 'Vul een prijs in.'; end if;
   if p_id is null then
-    insert into listings (seller_id, game, price_cents, language, condition, description, pickup)
-    values (uid, trim(p_game), p_price_cents, coalesce(p_language, 'NL'), coalesce(p_condition, ''), coalesce(p_description, ''), coalesce(p_pickup, ''))
+    insert into listings (seller_id, game, price_cents, language, condition, description, pickup, mode, trade_wish)
+    values (uid, trim(p_game), price, coalesce(p_language, 'NL'), coalesce(p_condition, ''), coalesce(p_description, ''), coalesce(p_pickup, ''), m, left(coalesce(p_trade_wish, ''), 300))
     returning id into nid;
-    perform gp_notify(w.user_id, 'Op je zoeklijst: ' || trim(p_game) || ' staat in de Koopgoot voor ' || gp_euro(p_price_cents) || ' (van ' || gp_name(uid) || ').')
+    perform gp_notify(w.user_id, 'Op je zoeklijst: ' || trim(p_game) || ' staat in de Koopgoot '
+        || case when m = 'ruil' then 'om te ruilen' when m = 'beide' then 'voor ' || gp_euro(price) || ' of te ruil' else 'voor ' || gp_euro(price) end
+        || ' (van ' || gp_name(uid) || ').')
       from (select distinct on (user_id) user_id from wanted
             where user_id <> uid and gp_status(user_id) in ('member', 'admin')
               and position(lower(trim(term)) in lower(trim(p_game))) > 0
-              and (max_cents is null or p_price_cents <= max_cents)) w;
+              and (max_cents is null or price <= max_cents)) w;
     return nid;
   end if;
-  update listings set game = trim(p_game), price_cents = p_price_cents, language = coalesce(p_language, 'NL'), condition = coalesce(p_condition, ''),
-    description = coalesce(p_description, ''), pickup = coalesce(p_pickup, '')
+  update listings set game = trim(p_game), price_cents = price, language = coalesce(p_language, 'NL'), condition = coalesce(p_condition, ''),
+    description = coalesce(p_description, ''), pickup = coalesce(p_pickup, ''), mode = m, trade_wish = left(coalesce(p_trade_wish, ''), 300)
   where id = p_id and seller_id = uid;
   if not found then raise exception 'Dit is niet jouw advertentie'; end if;
   return p_id;
@@ -742,20 +754,27 @@ begin
   end if;
 end $$;
 
-create or replace function public.make_offer(p_listing uuid, p_kind text, p_amount_cents int) returns void
+drop function if exists public.make_offer(uuid, text, int);
+create or replace function public.make_offer(p_listing uuid, p_kind text, p_amount_cents int, p_trade_game text default '') returns void
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := gp_require_member(); l listings;
+declare uid uuid := gp_require_member(); l listings; tg text := trim(coalesce(p_trade_game, ''));
 begin
   select * into l from listings where id = p_listing;
   if l.id is null or l.status not in ('te_koop', 'gereserveerd') then raise exception 'Deze advertentie is niet meer beschikbaar'; end if;
   if l.seller_id = uid then raise exception 'Dit is je eigen advertentie'; end if;
+  if p_kind not in ('kopen', 'bod', 'ruil') then raise exception 'Ongeldige keuze'; end if;
+  if p_kind = 'ruil' and l.mode = 'verkoop' then raise exception 'Dit spel is alleen te koop, niet te ruil.'; end if;
+  if p_kind <> 'ruil' and l.mode = 'ruil' then raise exception 'Dit spel is alleen te ruil.'; end if;
+  if p_kind = 'ruil' and length(tg) < 2 then raise exception 'Vul in welk spel je wilt ruilen.'; end if;
+  if p_kind = 'bod' and coalesce(p_amount_cents, 0) <= 0 then raise exception 'Vul een bedrag in.'; end if;
   if exists (select 1 from listing_offers where listing_id = p_listing and buyer_id = uid and state in ('pending', 'accepted')) then
     raise exception 'Je hebt al een verzoek gedaan';
   end if;
-  insert into listing_offers (listing_id, buyer_id, kind, amount_cents)
-  values (p_listing, uid, p_kind, case when p_kind = 'kopen' then l.price_cents else p_amount_cents end);
+  insert into listing_offers (listing_id, buyer_id, kind, amount_cents, trade_game)
+  values (p_listing, uid, p_kind, case when p_kind = 'kopen' then l.price_cents when p_kind = 'ruil' then 0 else p_amount_cents end, left(tg, 200));
   perform gp_notify(l.seller_id, case when p_kind = 'kopen' then gp_name(uid) || ' wil ' || l.game || ' kopen.'
-    else gp_name(uid) || ' biedt € ' || replace(to_char(p_amount_cents / 100.0, 'FM999990.00'), '.', ',') || ' voor ' || l.game || '.' end);
+    when p_kind = 'ruil' then gp_name(uid) || ' wil ' || l.game || ' ruilen en biedt: ' || left(tg, 200) || '.'
+    else gp_name(uid) || ' biedt ' || gp_euro(p_amount_cents) || ' voor ' || l.game || '.' end);
 end $$;
 
 create or replace function public.withdraw_offer(p_listing uuid) returns void
@@ -987,7 +1006,7 @@ begin
       'since', to_char(p.created_at, 'YYYY'), 'me', p.id = uid, 'bgg_user', p.bgg_user,
       'games', coalesce((select json_agg(json_build_object('id', g.id, 'name', g.name, 'players', g.players, 'minutes', g.minutes, 'weight', g.weight, 'lend', g.lend) order by lower(g.name))
         from member_games g where g.user_id = p.id), '[]'::json),
-      'listings', coalesce((select json_agg(json_build_object('id', l.id, 'game', l.game, 'price_cents', l.price_cents) order by l.created_at desc)
+      'listings', coalesce((select json_agg(json_build_object('id', l.id, 'game', l.game, 'price_cents', l.price_cents, 'mode', l.mode) order by l.created_at desc)
         from listings l where l.seller_id = p.id and l.status = 'te_koop'), '[]'::json),
       'wanted', coalesce((select json_agg(w.term order by lower(w.term)) from wanted w where w.user_id = p.id), '[]'::json))
   into r from profiles p where p.id = p_user and p.status in ('member', 'admin');

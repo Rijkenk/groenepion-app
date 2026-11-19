@@ -227,6 +227,30 @@ await t('meldingen gelezen markeren', async () => {
   await as.sanne('mark_notifications_read');
   assert.equal((await as.sanne('get_me')).unread, 0);
 });
+await t('koopgoot ruilen: alleen-ruil advertentie, ruilvoorstel, accepteren', async () => {
+  await as.eva('add_wanted', { p_term: 'Dune', p_max_cents: 1000 });
+  const l = await as.lotte('save_listing', { p_id: null, p_game: 'Dune Imperium', p_price_cents: 4000, p_language: 'EN', p_condition: '', p_description: '', p_pickup: '', p_mode: 'ruil', p_trade_wish: 'Iets coöperatiefs' });
+  assert.match((await as.eva('list_notifications'))[0].body, /Dune Imperium staat in de Koopgoot om te ruilen \(van Lotte\)/);
+  const d = await as.eva('get_listing', { p_listing: l });
+  assert.equal(d.mode, 'ruil');
+  assert.equal(d.price_cents, 0);
+  assert.equal(d.trade_wish, 'Iets coöperatiefs');
+  await rejects(as.eva('make_offer', { p_listing: l, p_kind: 'kopen', p_amount_cents: 0 }), /alleen te ruil/);
+  await rejects(as.eva('make_offer', { p_listing: l, p_kind: 'ruil', p_amount_cents: 0, p_trade_game: '' }), /welk spel/);
+  await as.eva('make_offer', { p_listing: l, p_kind: 'ruil', p_amount_cents: 0, p_trade_game: 'Spirit Island' });
+  assert.equal((await as.lotte('list_notifications'))[0].body, 'Eva wil Dune Imperium ruilen en biedt: Spirit Island.');
+  const o = (await as.lotte('get_listing', { p_listing: l })).offers[0];
+  assert.equal(o.trade_game, 'Spirit Island');
+  await as.lotte('respond_offer', { p_offer: o.id, p_accept: true });
+  assert.equal((await as.eva('get_listing', { p_listing: l })).my_offer.state, 'accepted');
+  const v = await as.sanne('save_listing', { p_id: null, p_game: 'Carcassonne', p_price_cents: 1500, p_language: 'NL', p_condition: '', p_description: '', p_pickup: '' });
+  await rejects(as.eva('make_offer', { p_listing: v, p_kind: 'ruil', p_amount_cents: 0, p_trade_game: 'Azul' }), /alleen te koop/);
+  const b = await as.sanne('save_listing', { p_id: null, p_game: 'Catan', p_price_cents: 1000, p_language: 'NL', p_condition: '', p_description: '', p_pickup: '', p_mode: 'beide', p_trade_wish: '' });
+  await as.eva('make_offer', { p_listing: b, p_kind: 'ruil', p_amount_cents: 0, p_trade_game: 'Azul' });
+  await as.lotte('make_offer', { p_listing: b, p_kind: 'kopen', p_amount_cents: 0 });
+  assert.equal((await as.sanne('get_listing', { p_listing: b })).offers.length, 2);
+  for (const w of (await as.eva('list_wanted')).mine) await as.eva('delete_wanted', { p_id: w.id });
+});
 await t('zoeklijst: melding bij nieuw spel in de koopgoot, met maximumprijs', async () => {
   await as.eva('add_wanted', { p_term: 'Wingspan', p_max_cents: 3000 });
   await as.lotte('add_wanted', { p_term: 'wingspan', p_max_cents: null });

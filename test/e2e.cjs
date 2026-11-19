@@ -74,6 +74,18 @@ const OUT = process.env.OUT || '.';
     await p.getByText('Bod van € 16 verstuurd.').waitFor();
     await shot('10-bod');
   });
+  await step('koopgoot: ruil voorstellen bij Dune', async () => {
+    await p.getByRole('button', { name: '← Terug naar de Koopgoot' }).click();
+    await p.getByRole('group', { name: 'Filter koop of ruil' }).getByRole('button', { name: 'Te ruil' }).click();
+    await p.getByRole('button', { name: /Dune: Imperium, Te ruil/ }).click();
+    await p.getByText('Zoekt in ruil:').waitFor();
+    if (await p.getByRole('button', { name: /Kopen voor/ }).count()) throw new Error('kopen zichtbaar bij alleen ruilen');
+    await p.getByRole('button', { name: 'Ruil voorstellen' }).click();
+    await p.getByLabel('Welk spel bied je aan in ruil?').fill('Spirit Island');
+    await p.getByRole('button', { name: 'Voorstel versturen' }).click();
+    await p.getByText('Ruilvoorstel verstuurd: Spirit Island.').waitFor();
+    await shot('10b-ruil');
+  });
   await step('wissel naar Sanne: bod accepteren, Kenneth ziet WhatsApp', async () => {
     await p.getByRole('button', { name: 'Profiel', exact: true }).click();
     await p.getByRole('button', { name: 'Uitloggen' }).click();
@@ -166,7 +178,7 @@ const OUT = process.env.OUT || '.';
     await p.getByRole('button', { name: 'Versturen' }).click();
     await p.getByText(/Verstuurd naar \d+ leden/).waitFor();
     await p.getByRole('button', { name: 'Koopgoot', exact: true }).click();
-    await p.getByRole('button', { name: '+ Spel verkopen' }).click();
+    await p.getByRole('button', { name: '+ Spel aanbieden' }).click();
     await p.getByLabel('Spel', { exact: true }).fill('Wingspan');
     await p.getByLabel('Prijs in euro').fill('25');
     await p.getByRole('button', { name: 'Plaatsen' }).click();
